@@ -17,12 +17,15 @@ app.use(express.json());
 // =======================
 // DB CONNECTION (RAILWAY SAFE)
 // =======================
-const db = mysql.createConnection({
+const db = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQL_DATABASE,
   port: process.env.MYSQLPORT,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
 });
 
 const PORT = process.env.PORT || 5000;
@@ -30,11 +33,6 @@ const PORT = process.env.PORT || 5000;
 // =======================
 // CONNECT DB + TABLES
 // =======================
-db.connect((err) => {
-  if (err) {
-    console.log("❌ Database connection failed:", err);
-  } else {
-    console.log("✅ MySQL Connected");
 
     // USERS TABLE
     const createUsersTable = `
@@ -71,8 +69,7 @@ db.connect((err) => {
       if (err) console.log("❌ Transactions table error:", err);
       else console.log("✅ Transactions table ready");
     });
-  }
-});
+  
 
 // =======================
 // TEST ROUTE
