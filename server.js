@@ -25,7 +25,7 @@ const PORT = process.env.PORT || 8080;
 console.log("🔎 DB ENV CHECK:", {
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
-  database: process.env.MYSQL_DATABASE,
+  database: process.env.MYSQLgitDATABASE,
   port: process.env.MYSQLPORT,
 });
 
