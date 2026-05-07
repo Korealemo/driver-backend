@@ -15,36 +15,49 @@ app.use(cors());
 app.use(express.json());
 
 // =======================
-// DB CONNECTION (RAILWAY SAFE)
+// PORT (RAILWAY SAFE)
+// =======================
+const PORT = process.env.PORT || 8080;
+
+// =======================
+// DEBUG ENV (REMOVE LATER IF YOU WANT)
+// =======================
+console.log("🔎 DB ENV CHECK:", {
+  host: process.env.MYSQLHOST,
+  user: process.env.MYSQLUSER,
+  database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT,
+});
+
+// =======================
+// DB CONNECTION (RAILWAY SAFE - POOL)
 // =======================
 const db = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
-  port: Number(process.env.MYSQLPORT),
+  port: process.env.MYSQLPORT,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
 
 // =======================
-// PORT
+// TEST CONNECTION
 // =======================
-const PORT = process.env.PORT || 5000;
+db.getConnection((err, connection) => {
+  if (err) {
+    console.log("❌ Database connection failed:", err);
+    return;
+  }
 
-// =======================
-// TEST ENV DEBUG (REMOVE LATER)
-// =======================
-console.log("🔎 DB ENV CHECK:", {
-  host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER,
-  db: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT,
+  console.log("✅ MySQL Connected");
+  connection.release();
 });
 
 // =======================
-// TABLE CREATION
+// CREATE TABLES
 // =======================
 
 // USERS TABLE
@@ -60,11 +73,6 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`;
 
-db.query(createUsersTable, (err) => {
-  if (err) console.log("❌ Users table error:", err);
-  else console.log("✅ Users table ready");
-});
-
 // TRANSACTIONS TABLE
 const createTransactionsTable = `
 CREATE TABLE IF NOT EXISTS transactions (
@@ -76,20 +84,31 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`;
 
+// Execute table creation safely
+db.query(createUsersTable, (err) => {
+  if (err) console.log("❌ Users table error:", err);
+  else console.log("✅ Users table ready");
+});
+
 db.query(createTransactionsTable, (err) => {
   if (err) console.log("❌ Transactions table error:", err);
   else console.log("✅ Transactions table ready");
 });
 
 // =======================
-// ROUTES
+// HEALTH CHECK
 // =======================
-
 app.get("/", (req, res) => {
   res.send("🚀 API is running...");
 });
 
+app.get("/health", (req, res) => {
+  res.json({ status: "OK", message: "Server healthy" });
+});
+
+// =======================
 // REGISTER
+// =======================
 app.post("/register", async (req, res) => {
   const { name, surname, phone, email, password, car_plate } = req.body;
 
@@ -112,6 +131,7 @@ app.post("/register", async (req, res) => {
         if (err) {
           return res.status(500).json({
             message: "Phone already exists or DB error",
+            error: err.message,
           });
         }
 
@@ -122,18 +142,24 @@ app.post("/register", async (req, res) => {
       }
     );
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
+// =======================
 // LOGIN
+// =======================
 app.post("/login", (req, res) => {
   const { phone, password } = req.body;
+
+  if (!phone || !password) {
+    return res.status(400).json({ message: "Phone and password required" });
+  }
 
   const sql = "SELECT * FROM users WHERE phone = ?";
 
   db.query(sql, [phone], async (err, results) => {
-    if (err) return res.status(500).json({ message: "Server error" });
+    if (err) return res.status(500).json({ message: "Server error", err });
 
     if (results.length === 0) {
       return res.status(400).json({ message: "User not found" });
@@ -155,16 +181,26 @@ app.post("/login", (req, res) => {
     res.json({
       message: "Login successful",
       token,
-      user,
+      user: {
+        id: user.id,
+        name: user.name,
+        surname: user.surname,
+        phone: user.phone,
+        car_plate: user.car_plate,
+      },
     });
   });
 });
 
+// =======================
 // GET PROFILE
+// =======================
 app.get("/me", (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
 
-  if (!token) return res.status(401).json({ message: "No token" });
+  if (!token) {
+    return res.status(401).json({ message: "No token provided" });
+  }
 
   try {
     const decoded = jwt.verify(token, "SECRET_KEY");
@@ -175,6 +211,10 @@ app.get("/me", (req, res) => {
       (err, results) => {
         if (err) return res.status(500).json({ message: "Server error" });
 
+        if (results.length === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
         res.json(results[0]);
       }
     );
@@ -183,9 +223,15 @@ app.get("/me", (req, res) => {
   }
 });
 
+// =======================
 // CREATE TRANSACTION
+// =======================
 app.post("/transaction", (req, res) => {
   const { driver_id, amount, method } = req.body;
+
+  if (!driver_id || !amount || !method) {
+    return res.status(400).json({ message: "Missing fields" });
+  }
 
   const sql = `
     INSERT INTO transactions (driver_id, amount, method)
@@ -193,7 +239,7 @@ app.post("/transaction", (req, res) => {
   `;
 
   db.query(sql, [driver_id, amount, method], (err, result) => {
-    if (err) return res.status(500).json({ message: "DB error" });
+    if (err) return res.status(500).json({ message: "DB error", err });
 
     res.json({
       message: "Transaction saved",
@@ -202,20 +248,24 @@ app.post("/transaction", (req, res) => {
   });
 });
 
+// =======================
 // COMPLETE PAYMENT
+// =======================
 app.post("/pay/:id", (req, res) => {
   db.query(
     "UPDATE transactions SET status = 'completed' WHERE id = ?",
     [req.params.id],
     (err) => {
-      if (err) return res.status(500).json({ message: "DB error" });
+      if (err) return res.status(500).json({ message: "DB error", err });
 
       res.json({ message: "Payment completed" });
     }
   );
 });
 
+// =======================
 // GET BALANCE
+// =======================
 app.get("/get-balance/:driverId", (req, res) => {
   const sql = `
     SELECT SUM(amount) AS total
@@ -233,7 +283,9 @@ app.get("/get-balance/:driverId", (req, res) => {
   });
 });
 
+// =======================
 // GET TRANSACTIONS
+// =======================
 app.get("/get-transactions/:driverId", (req, res) => {
   const sql = `
     SELECT *
@@ -250,8 +302,8 @@ app.get("/get-transactions/:driverId", (req, res) => {
 });
 
 // =======================
-// START SERVER
+// START SERVER (RAILWAY SAFE)
 // =======================
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Server running on port " + PORT);
 });
