@@ -37,7 +37,7 @@ const db = mysql.createPool({
   connectionLimit: 10,
 });
 
-// test connection
+// test connection (safe version)
 db.getConnection((err, connection) => {
   if (err) {
     console.log("❌ MySQL Connection Failed:", err.message);
@@ -48,14 +48,9 @@ db.getConnection((err, connection) => {
 });
 
 // =======================
-// RAILWAY PORT (FIXED - NO FALLBACK)
+// PORT FIX (CRITICAL RAILWAY FIX)
 // =======================
-const PORT = process.env.PORT;
-
-// safety check (important for debugging)
-if (!PORT) {
-  console.log("❌ Railway PORT missing - deployment will fail");
-}
+const PORT = process.env.PORT || 3000;
 
 // =======================
 // HEALTH CHECK
@@ -76,7 +71,7 @@ app.get("/db-test", (req, res) => {
     if (err) {
       return res.status(500).json({
         message: "DB error",
-        error: err,
+        error: err.message,
       });
     }
 
