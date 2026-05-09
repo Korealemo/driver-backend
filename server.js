@@ -48,17 +48,17 @@ db.getConnection((err, connection) => {
 });
 
 // =======================
-// PORT (RAILWAY SAFE)
+// RAILWAY PORT (FIXED - NO FALLBACK)
 // =======================
 const PORT = process.env.PORT;
 
-// safety check
+// safety check (important for debugging)
 if (!PORT) {
-  console.log("❌ PORT NOT FOUND (Railway issue)");
+  console.log("❌ Railway PORT missing - deployment will fail");
 }
 
 // =======================
-// HEALTH CHECK (IMPORTANT)
+// HEALTH CHECK
 // =======================
 app.get("/", (req, res) => {
   res.send("🚀 API is running...");
@@ -219,7 +219,7 @@ app.get("/me", (req, res) => {
         res.json(results[0]);
       }
     );
-  } catch (err) {
+  } catch {
     res.status(401).json({ message: "Invalid token" });
   }
 });
@@ -295,7 +295,7 @@ app.get("/get-transactions/:id", (req, res) => {
 });
 
 // =======================
-// START SERVER (RAILWAY FIXED)
+// START SERVER (RAILWAY SAFE)
 // =======================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
