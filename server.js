@@ -370,7 +370,6 @@ db.query(createWithdrawalsTable, (err) => {
   }
 });
 app.post("/withdraw", (req, res) => {
-
   const { driver_id, amount } = req.body;
 
   const balanceQuery = `
@@ -379,36 +378,22 @@ app.post("/withdraw", (req, res) => {
     WHERE driver_id=? AND status='completed'
   `;
 
-  const withdrawalQuery = `
+  const withdrawQuery = `
     SELECT SUM(amount) AS withdrawn
     FROM withdrawals
     WHERE driver_id=?
   `;
 
-  db.query(balanceQuery, [driver_id], (err, payments) => {
+  db.query(balanceQuery, [driver_id], (err, payRes) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-    if (err) {
-      return res.status(500).json({
-        error: err.message,
-      });
-    }
+    db.query(withdrawQuery, [driver_id], (err2, wRes) => {
+      if (err2) return res.status(500).json({ error: err2.message });
 
-    db.query(withdrawalQuery, [driver_id], (err2, withdrawals) => {
+      const totalPayments = Number(payRes[0].total || 0);
+      const totalWithdrawn = Number(wRes[0].withdrawn || 0);
 
-      if (err2) {
-        return res.status(500).json({
-          error: err2.message,
-        });
-      }
-
-      const totalPayments =
-        Number(payments[0].total || 0);
-
-      const totalWithdrawals =
-        Number(withdrawals[0].withdrawn || 0);
-
-      const balance =
-        totalPayments - totalWithdrawals;
+      const balance = totalPayments - totalWithdrawn;
 
       if (Number(amount) > balance) {
         return res.status(400).json({
@@ -420,16 +405,10 @@ app.post("/withdraw", (req, res) => {
         "INSERT INTO withdrawals (driver_id, amount) VALUES (?, ?)",
         [driver_id, amount],
         (err3, result) => {
-
-          if (err3) {
-            return res.status(500).json({
-              error: err3.message,
-            });
-          }
+          if (err3) return res.status(500).json({ error: err3.message });
 
           res.json({
             message: "Withdrawal successful",
-            withdrawalId: result.insertId,
             newBalance: balance - Number(amount),
           });
         }
@@ -437,7 +416,6 @@ app.post("/withdraw", (req, res) => {
     });
   });
 });
-
 // =======================
 // START SERVER (RAILWAY SAFE)
 // =======================
