@@ -12,8 +12,6 @@ const app = express();
 // CONFIG
 // =======================
 const PORT = process.env.PORT || 3000;
-
-// 🔥 SINGLE SOURCE OF TRUTH (FIXES INVALID TOKEN ISSUE)
 const JWT_SECRET = process.env.JWT_SECRET || "SECRET_KEY";
 
 // =======================
@@ -23,7 +21,7 @@ app.use(cors());
 app.use(express.json());
 
 // =======================
-// DEBUG ENV
+// DEBUG
 // =======================
 console.log("🔎 ENV CHECK:", {
   host: process.env.MYSQLHOST,
@@ -34,7 +32,7 @@ console.log("🔎 ENV CHECK:", {
 });
 
 // =======================
-// MYSQL
+// DB
 // =======================
 const db = mysql.createPool({
   host: process.env.MYSQLHOST,
@@ -47,14 +45,13 @@ const db = mysql.createPool({
 });
 
 // =======================
-// TEST DB
+// DB TEST
 // =======================
-db.getConnection((err, connection) => {
-  if (err) {
-    console.log("❌ MySQL Error:", err.message);
-  } else {
-    console.log("✅ MySQL Connected");
-    connection.release();
+db.getConnection((err, conn) => {
+  if (err) console.log("❌ DB Error:", err.message);
+  else {
+    console.log("✅ DB Connected");
+    conn.release();
   }
 });
 
@@ -62,7 +59,7 @@ db.getConnection((err, connection) => {
 // HEALTH
 // =======================
 app.get("/", (req, res) => {
-  res.send("🚀 API Running");
+  res.json({ status: "API running" });
 });
 
 // =======================
@@ -72,14 +69,10 @@ function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
 
-  if (!token) {
-    return res.status(401).json({ message: "No token provided" });
-  }
+  if (!token) return res.status(401).json({ message: "No token" });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ message: "Invalid token" });
-    }
+    if (err) return res.status(403).json({ message: "Invalid token" });
 
     req.user = user;
     next();
@@ -129,7 +122,7 @@ CREATE TABLE IF NOT EXISTS withdrawals (
 app.post("/register", async (req, res) => {
   const { name, surname, phone, email, password, car_plate } = req.body;
 
-  if (!name || !surname || !phone || !email || !password || !car_plate) {
+  if (!name || !phone || !password) {
     return res.status(400).json({ message: "Missing fields" });
   }
 
@@ -141,7 +134,9 @@ app.post("/register", async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?)`,
       [name, surname, phone, email, hashed, car_plate],
       (err, result) => {
-        if (err) return res.status(500).json({ message: "DB error" });
+        if (err) {
+          return res.status(500).json({ message: "DB error" });
+        }
 
         res.json({
           message: "User created",
@@ -175,30 +170,31 @@ app.post("/login", (req, res) => {
       return res.status(400).json({ message: "Wrong password" });
     }
 
-    // 🔥 FIXED TOKEN
     const token = jwt.sign(
       { id: user.id, phone: user.phone },
       JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "7d" }
     );
 
     res.json({
-      message: "Login success",
       token,
-      user,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        car_plate: user.car_plate,
+      },
     });
   });
 });
 
 // =======================
-// PROFILE (/me)
+// /ME
 // =======================
 app.get("/me", authenticateToken, (req, res) => {
-  const userId = req.user.id;
-
   db.query(
-    "SELECT id, name, surname, phone, email, car_plate FROM users WHERE id=?",
-    [userId],
+    "SELECT id, name, surname, phone, car_plate FROM users WHERE id=?",
+    [req.user.id],
     (err, results) => {
       if (err) return res.status(500).json({ message: "DB error" });
 
@@ -212,22 +208,31 @@ app.get("/me", authenticateToken, (req, res) => {
 });
 
 // =======================
-// TRANSACTION
+// TRANSACTIONS
 // =======================
 app.post("/transaction", (req, res) => {
   const { driver_id, amount, method } = req.body;
 
   db.query(
-    `INSERT INTO transactions (driver_id, amount, method, status)
-     VALUES (?, ?, ?, 'pending')`,
+    "INSERT INTO transactions (driver_id, amount, method) VALUES (?, ?, ?)",
     [driver_id, amount, method],
     (err, result) => {
       if (err) return res.status(500).json({ message: "DB error" });
 
-      res.json({
-        message: "Transaction created",
-        id: result.insertId,
-      });
+      res.json({ id: result.insertId });
+    }
+  );
+});
+
+// 🔥 NEW (FIX FOR YOUR ERROR)
+app.get("/get-transactions/:id", (req, res) => {
+  db.query(
+    "SELECT * FROM transactions WHERE driver_id=? ORDER BY created_at DESC",
+    [req.params.id],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      res.json(results);
     }
   );
 });
@@ -288,7 +293,7 @@ app.post("/withdraw", (req, res) => {
 });
 
 // =======================
-// START SERVER
+// START
 // =======================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
