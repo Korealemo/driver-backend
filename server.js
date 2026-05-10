@@ -5,6 +5,8 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const JWT_SECRET = "SECRET_KEY";
+
 
 const app = express();
 
@@ -176,10 +178,10 @@ app.post("/login", (req, res) => {
       }
 
       const token = jwt.sign(
-        { id: user.id, phone: user.phone },
-        process.env.JWT_SECRET || "SECRET_KEY",
-        { expiresIn: "1d" }
-      );
+  { id: user.id, phone: user.phone },
+  JWT_SECRET,
+  { expiresIn: "1d" }
+);
 
       res.json({ message: "Login successful", token, user });
     }
