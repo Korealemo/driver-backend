@@ -37,7 +37,7 @@ const db = mysql.createPool({
   connectionLimit: 10,
 });
 
-// test connection (safe version)
+// Test DB connection
 db.getConnection((err, connection) => {
   if (err) {
     console.log("❌ MySQL Connection Failed:", err.message);
@@ -48,7 +48,7 @@ db.getConnection((err, connection) => {
 });
 
 // =======================
-// PORT FIX (CRITICAL RAILWAY FIX)
+// PORT
 // =======================
 const PORT = process.env.PORT || 3000;
 
@@ -64,27 +64,9 @@ app.get("/health", (req, res) => {
 });
 
 // =======================
-// DB TEST
+// CREATE TABLES (AUTO)
 // =======================
-app.get("/db-test", (req, res) => {
-  db.query("SELECT 1 + 1 AS result", (err, data) => {
-    if (err) {
-      return res.status(500).json({
-        message: "DB error",
-        error: err.message,
-      });
-    }
 
-    res.json({
-      message: "Database connected successfully",
-      data,
-    });
-  });
-});
-
-// =======================
-// CREATE TABLES
-// =======================
 const createUsersTable = `
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -109,15 +91,19 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 `;
 
-db.query(createUsersTable, (err) => {
-  if (err) console.log("❌ Users table error:", err.message);
-  else console.log("✅ Users table ready");
-});
+const createWithdrawalsTable = `
+CREATE TABLE IF NOT EXISTS withdrawals (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  driver_id INT,
+  amount DECIMAL(10,2),
+  status VARCHAR(20) DEFAULT 'completed',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`;
 
-db.query(createTransactionsTable, (err) => {
-  if (err) console.log("❌ Transactions table error:", err.message);
-  else console.log("✅ Transactions table ready");
-});
+db.query(createUsersTable);
+db.query(createTransactionsTable);
+db.query(createWithdrawalsTable);
 
 // =======================
 // REGISTER
@@ -132,22 +118,19 @@ app.post("/register", async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const sql = `
-      INSERT INTO users (name, surname, phone, email, password, car_plate)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
+    db.query(
+      `INSERT INTO users (name, surname, phone, email, password, car_plate)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [name, surname, phone, email, hashedPassword, car_plate],
+      (err, result) => {
+        if (err) return res.status(500).json({ message: "DB error" });
 
-    db.query(sql, [name, surname, phone, email, hashedPassword, car_plate], (err, result) => {
-      if (err) {
-        return res.status(500).json({ message: "DB error or phone exists" });
+        res.json({
+          message: "Driver registered",
+          userId: result.insertId,
+        });
       }
-
-      res.json({
-        message: "Driver registered",
-        userId: result.insertId,
-      });
-    });
-
+    );
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
@@ -159,9 +142,7 @@ app.post("/register", async (req, res) => {
 app.post("/login", (req, res) => {
   const { phone, password } = req.body;
 
-  const sql = "SELECT * FROM users WHERE phone = ?";
-
-  db.query(sql, [phone], async (err, results) => {
+  db.query("SELECT * FROM users WHERE phone=?", [phone], async (err, results) => {
     if (err) return res.status(500).json({ message: "Server error" });
 
     if (results.length === 0) {
@@ -182,66 +163,33 @@ app.post("/login", (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({
-      message: "Login successful",
-      token,
-      user,
-    });
+    res.json({ message: "Login successful", token, user });
   });
 });
 
 // =======================
-// PROFILE
-// =======================
-app.get("/me", (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-
-  if (!token) return res.status(401).json({ message: "No token" });
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "SECRET_KEY");
-
-    db.query(
-      "SELECT id, name, surname, phone, email, car_plate FROM users WHERE id = ?",
-      [decoded.id],
-      (err, results) => {
-        if (err) return res.status(500).json({ message: "Server error" });
-
-        if (!results.length) {
-          return res.status(404).json({ message: "User not found" });
-        }
-
-        res.json(results[0]);
-      }
-    );
-  } catch {
-    res.status(401).json({ message: "Invalid token" });
-  }
-});
-
-// =======================
-// TRANSACTION
+// CREATE TRANSACTION (PAYMENT)
 // =======================
 app.post("/transaction", (req, res) => {
   const { driver_id, amount, method } = req.body;
 
-  const sql = `
-    INSERT INTO transactions (driver_id, amount, method)
-    VALUES (?, ?, ?)
-  `;
+  db.query(
+    `INSERT INTO transactions (driver_id, amount, method, status)
+     VALUES (?, ?, ?, 'pending')`,
+    [driver_id, amount, method],
+    (err, result) => {
+      if (err) return res.status(500).json({ message: "DB error" });
 
-  db.query(sql, [driver_id, amount, method], (err, result) => {
-    if (err) return res.status(500).json({ message: "DB error" });
-
-    res.json({
-      message: "Transaction saved",
-      id: result.insertId,
-    });
-  });
+      res.json({
+        message: "Transaction created",
+        transactionId: result.insertId,
+      });
+    }
+  );
 });
 
 // =======================
-// COMPLETE PAYMENT
+// COMPLETE PAYMENT (IMPORTANT)
 // =======================
 app.post("/pay/:id", (req, res) => {
   db.query(
@@ -254,41 +202,45 @@ app.post("/pay/:id", (req, res) => {
     }
   );
 });
-app.get("/transaction/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
 
-    db.query(
-      "SELECT * FROM transactions WHERE id = ? LIMIT 1",
-      [id],
-      (err, results) => {
-        if (err) {
-          return res.status(500).json({
-            error: err.message,
-          });
-        }
+// =======================
+// GET SINGLE TRANSACTION
+// =======================
+app.get("/transaction/:id", (req, res) => {
+  db.query(
+    "SELECT * FROM transactions WHERE id=?",
+    [req.params.id],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
 
-        if (results.length === 0) {
-          return res.status(404).json({
-            message: "Transaction not found",
-          });
-        }
-
-        res.json(results[0]);
+      if (results.length === 0) {
+        return res.status(404).json({ message: "Not found" });
       }
-    );
-  } catch (e) {
-    res.status(500).json({
-      error: e.toString(),
-    });
-  }
+
+      res.json(results[0]);
+    }
+  );
 });
 
 // =======================
-// BALANCE
+// GET ALL TRANSACTIONS
+// =======================
+app.get("/get-transactions/:id", (req, res) => {
+  db.query(
+    "SELECT * FROM transactions WHERE driver_id=? ORDER BY created_at DESC",
+    [req.params.id],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      res.json(results);
+    }
+  );
+});
+
+// =======================
+// BALANCE CALCULATION (FIXED LOGIC)
 // =======================
 app.get("/get-balance/:id", (req, res) => {
-
   const driverId = req.params.id;
 
   const paymentsQuery = `
@@ -303,104 +255,65 @@ app.get("/get-balance/:id", (req, res) => {
     WHERE driver_id=?
   `;
 
-  db.query(paymentsQuery, [driverId], (err, payments) => {
+  db.query(paymentsQuery, [driverId], (err, payRes) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-    if (err) {
-      return res.status(500).json({
-        error: err.message,
-      });
-    }
+    db.query(withdrawalsQuery, [driverId], (err2, wRes) => {
+      if (err2) return res.status(500).json({ error: err2.message });
 
-    db.query(withdrawalsQuery, [driverId], (err2, withdrawals) => {
+      const totalPayments = Number(payRes[0].totalPayments || 0);
+      const totalWithdrawals = Number(wRes[0].totalWithdrawals || 0);
 
-      if (err2) {
-        return res.status(500).json({
-          error: err2.message,
-        });
-      }
+      const balance = totalPayments - totalWithdrawals;
 
-      const totalPayments =
-        Number(payments[0].totalPayments || 0);
-
-      const totalWithdrawals =
-        Number(withdrawals[0].totalWithdrawals || 0);
-
-      const balance =
-        totalPayments - totalWithdrawals;
-
-      res.json({
-        balance,
-      });
+      res.json({ balance });
     });
   });
 });
 
-
 // =======================
-// TRANSACTIONS LIST
+// WITHDRAW MONEY (FIXED + SAFE)
 // =======================
-app.get("/get-transactions/:id", (req, res) => {
-  db.query(
-    "SELECT * FROM transactions WHERE driver_id=? ORDER BY created_at DESC",
-    [req.params.id],
-    (err, results) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      res.json(results);
-    }
-  );
-});
-// =======================
-// MY CASH WITHDRAWALS TABLE
-// =======================
-const createWithdrawalsTable = `
-CREATE TABLE IF NOT EXISTS withdrawals (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  driver_id INT,
-  amount DECIMAL(10,2),
-  status VARCHAR(20) DEFAULT 'completed',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-`;
-db.query(createWithdrawalsTable, (err) => {
-  if (err) {
-    console.log("❌ Withdrawals table error:", err.message);
-  } else {
-    console.log("✅ Withdrawals table ready");
-  }
-});
 app.post("/withdraw", (req, res) => {
   const { driver_id, amount } = req.body;
 
-  const balanceQuery = `
-    SELECT SUM(amount) AS total
+  if (!driver_id || !amount) {
+    return res.status(400).json({ message: "Missing data" });
+  }
+
+  // 1. Get total earnings
+  const paymentsQuery = `
+    SELECT SUM(amount) AS totalPayments
     FROM transactions
     WHERE driver_id=? AND status='completed'
   `;
 
-  const withdrawQuery = `
-    SELECT SUM(amount) AS withdrawn
+  // 2. Get total withdrawn
+  const withdrawalsQuery = `
+    SELECT SUM(amount) AS totalWithdrawn
     FROM withdrawals
     WHERE driver_id=?
   `;
 
-  db.query(balanceQuery, [driver_id], (err, payRes) => {
+  db.query(paymentsQuery, [driver_id], (err, payRes) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    db.query(withdrawQuery, [driver_id], (err2, wRes) => {
+    db.query(withdrawalsQuery, [driver_id], (err2, wRes) => {
       if (err2) return res.status(500).json({ error: err2.message });
 
-      const totalPayments = Number(payRes[0].total || 0);
-      const totalWithdrawn = Number(wRes[0].withdrawn || 0);
+      const totalPayments = Number(payRes[0].totalPayments || 0);
+      const totalWithdrawn = Number(wRes[0].totalWithdrawn || 0);
 
       const balance = totalPayments - totalWithdrawn;
 
+      // 3. Check balance
       if (Number(amount) > balance) {
         return res.status(400).json({
           message: "Insufficient balance",
         });
       }
 
+      // 4. Save withdrawal
       db.query(
         "INSERT INTO withdrawals (driver_id, amount) VALUES (?, ?)",
         [driver_id, amount],
@@ -416,8 +329,9 @@ app.post("/withdraw", (req, res) => {
     });
   });
 });
+
 // =======================
-// START SERVER (RAILWAY SAFE)
+// START SERVER
 // =======================
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
