@@ -288,20 +288,53 @@ app.get("/transaction/:id", async (req, res) => {
 // BALANCE
 // =======================
 app.get("/get-balance/:id", (req, res) => {
-  db.query(
-    `
-    SELECT SUM(amount) AS total
+
+  const driverId = req.params.id;
+
+  const paymentsQuery = `
+    SELECT SUM(amount) AS totalPayments
     FROM transactions
     WHERE driver_id=? AND status='completed'
-    `,
-    [req.params.id],
-    (err, results) => {
-      if (err) return res.status(500).json({ error: err.message });
+  `;
 
-      res.json({ balance: results[0].total || 0 });
+  const withdrawalsQuery = `
+    SELECT SUM(amount) AS totalWithdrawals
+    FROM withdrawals
+    WHERE driver_id=?
+  `;
+
+  db.query(paymentsQuery, [driverId], (err, payments) => {
+
+    if (err) {
+      return res.status(500).json({
+        error: err.message,
+      });
     }
-  );
+
+    db.query(withdrawalsQuery, [driverId], (err2, withdrawals) => {
+
+      if (err2) {
+        return res.status(500).json({
+          error: err2.message,
+        });
+      }
+
+      const totalPayments =
+        Number(payments[0].totalPayments || 0);
+
+      const totalWithdrawals =
+        Number(withdrawals[0].totalWithdrawals || 0);
+
+      const balance =
+        totalPayments - totalWithdrawals;
+
+      res.json({
+        balance,
+      });
+    });
+  });
 });
+
 
 // =======================
 // TRANSACTIONS LIST
@@ -316,6 +349,93 @@ app.get("/get-transactions/:id", (req, res) => {
       res.json(results);
     }
   );
+});
+// =======================
+// MY CASH WITHDRAWALS TABLE
+// =======================
+const createWithdrawalsTable = `
+CREATE TABLE IF NOT EXISTS withdrawals (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  driver_id INT,
+  amount DECIMAL(10,2),
+  status VARCHAR(20) DEFAULT 'completed',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`;
+db.query(createWithdrawalsTable, (err) => {
+  if (err) {
+    console.log("❌ Withdrawals table error:", err.message);
+  } else {
+    console.log("✅ Withdrawals table ready");
+  }
+});
+app.post("/withdraw", (req, res) => {
+
+  const { driver_id, amount } = req.body;
+
+  const balanceQuery = `
+    SELECT SUM(amount) AS total
+    FROM transactions
+    WHERE driver_id=? AND status='completed'
+  `;
+
+  const withdrawalQuery = `
+    SELECT SUM(amount) AS withdrawn
+    FROM withdrawals
+    WHERE driver_id=?
+  `;
+
+  db.query(balanceQuery, [driver_id], (err, payments) => {
+
+    if (err) {
+      return res.status(500).json({
+        error: err.message,
+      });
+    }
+
+    db.query(withdrawalQuery, [driver_id], (err2, withdrawals) => {
+
+      if (err2) {
+        return res.status(500).json({
+          error: err2.message,
+        });
+      }
+
+      const totalPayments =
+        Number(payments[0].total || 0);
+
+      const totalWithdrawals =
+        Number(withdrawals[0].withdrawn || 0);
+
+      const balance =
+        totalPayments - totalWithdrawals;
+
+      if (Number(amount) > balance) {
+        return res.status(400).json({
+          message: "Insufficient balance",
+        });
+      }
+
+      db.query(
+        "INSERT INTO withdrawals (driver_id, amount) VALUES (?, ?)",
+        [driver_id, amount],
+        (err3, result) => {
+
+          if (err3) {
+            return res.status(500).json({
+              error: err3.message,
+            });
+          }
+
+          res.json({
+            message: "Withdrawal successful",
+            withdrawalId: result.insertId,
+            newBalance: balance - Number(amount),
+          });
+        }
+      );
+    });
+  });
 });
 
 // =======================
