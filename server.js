@@ -254,6 +254,35 @@ app.post("/pay/:id", (req, res) => {
     }
   );
 });
+app.get("/transaction/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    db.query(
+      "SELECT * FROM transactions WHERE id = ? LIMIT 1",
+      [id],
+      (err, results) => {
+        if (err) {
+          return res.status(500).json({
+            error: err.message,
+          });
+        }
+
+        if (results.length === 0) {
+          return res.status(404).json({
+            message: "Transaction not found",
+          });
+        }
+
+        res.json(results[0]);
+      }
+    );
+  } catch (e) {
+    res.status(500).json({
+      error: e.toString(),
+    });
+  }
+});
 
 // =======================
 // BALANCE
