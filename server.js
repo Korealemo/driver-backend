@@ -167,6 +167,30 @@ app.post("/login", (req, res) => {
   });
 });
 
+app.get("/me", (req, res) => {
+  const driverId = req.query.id;
+
+  if (!driverId) {
+    return res.status(400).json({ message: "Missing driver id" });
+  }
+
+  db.query(
+    "SELECT id, name, surname, phone, car_plate FROM users WHERE id=?",
+    [driverId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json(results[0]);
+    }
+  );
+});
+
 // =======================
 // CREATE TRANSACTION (PAYMENT)
 // =======================
